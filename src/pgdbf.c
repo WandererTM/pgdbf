@@ -30,7 +30,7 @@
 #include <sys/types.h>
 
 #include "pgdbf.h"
-#define STANDARDOPTS "cCdDeEhm:i:nNpPqQrRtTuU"
+#define STANDARDOPTS "cCdDeEhlLm:i:nNpPqQrRtTuU"
 
 int main(int argc, char **argv) {
     /* Describing the DBF file */
@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
     int     optusedroptable = 1;
     int     optuseifexists = 1;
     int     optignorefields = 0;
+    int     optloaddata = 1;
     int     optusequotedtablename = 0;
     int     optusetransaction = 1;
     int     optusetruncatetable = 0;
@@ -174,6 +175,12 @@ int main(int argc, char **argv) {
                 i++;
             }
             break;
+        case 'l':
+            optloaddata = 1;
+            break;
+        case 'L':
+            optloaddata = 0;
+            break;
         case 'm':
             memofilename = optarg;
             break;
@@ -238,9 +245,9 @@ int main(int argc, char **argv) {
     if(optexitcode != -1) {
         printf(
 #if defined(HAVE_ICONV)
-               "Usage: %s [-cCdDeEhtTuU] [-s encoding] [-m memofilename] [-i fieldname1,fieldname2,fieldnameN] filename [indexcolumn ...]\n"
+               "Usage: %s [-cCdDeEhlLtTuU] [-s encoding] [-m memofilename] [-i fieldname1,fieldname2,fieldnameN] filename [indexcolumn ...]\n"
 #else
-               "Usage: %s [-cCdDeEhtTuU] [-m memofilename] [-i fieldname1,fieldname2,fieldnameN] filename [indexcolumn ...]\n"
+               "Usage: %s [-cCdDeEhlLtTuU] [-m memofilename] [-i fieldname1,fieldname2,fieldnameN] filename [indexcolumn ...]\n"
 #endif
                "Convert the named XBase file into PostgreSQL format\n"
                "\n"
@@ -251,6 +258,8 @@ int main(int argc, char **argv) {
                "  -e  use 'IF EXISTS' when dropping tables (PostgreSQL 8.2+) (default)\n"
                "  -E  do not use 'IF EXISTS' when dropping tables (PostgreSQL 8.1 and older)\n"
                "  -h  print this message and exit\n"
+               "  -l  load data (default)\n"
+               "  -L  do not load data (only DDL statements)\n"
                "  -i  ignore fields"
                "  -m  the name of the associated memo file (if necessary)\n"
                "  -n  use type 'NUMERIC' for NUMERIC fields (default)\n"
@@ -645,223 +654,224 @@ int main(int argc, char **argv) {
     }
     if(optusecreatetable) printf(");\n");
 
-    /* Truncate the table if requested */
-    if(optusetruncatetable) {
-        printf("TRUNCATE TABLE %s;\n", baretablename);
-    }
-
-    /* Get PostgreSQL ready to receive lots of input */
-    printf("\\COPY %s FROM STDIN\n", baretablename);
-
-    dbfbatchsize = DBFBATCHTARGET / littleint16_t(dbfheader.recordlength);
-    if(!dbfbatchsize) {
-        dbfbatchsize = 1;
-    }
-    inputbuffer = malloc(littleint16_t(dbfheader.recordlength) * dbfbatchsize);
-    if(inputbuffer == NULL) {
-        exitwitherror("Unable to malloc a record buffer", 1);
-    }
-    outputbuffer = malloc(longestfield + 1);
-    if(outputbuffer == NULL) {
-        exitwitherror("Unable to malloc the output buffer", 1);
-    }
-
-    /* Loop across records in the file, taking 'dbfbatchsize' at a time, and
-     * output them in PostgreSQL-compatible format */
-    if(optshowprogress) {
-        fprintf(stderr, "Progress: 0");
-        fflush(stderr);
-    }
-    for(recordbase = 0; recordbase < littleint32_t(dbfheader.recordcount); recordbase += dbfbatchsize) {
-        blocksread = fread(inputbuffer, littleint16_t(dbfheader.recordlength), dbfbatchsize, dbffile);
-        if(blocksread != dbfbatchsize &&
-           recordbase + blocksread < littleint32_t(dbfheader.recordcount)) {
-            exitwitherror("Unable to read an entire record", 1);
+    if(optloaddata) {
+        /* Truncate the table if requested */
+        if(optusetruncatetable) {
+            printf("TRUNCATE TABLE %s;\n", baretablename);
         }
-        for(batchindex = 0; batchindex < blocksread; batchindex++) {
-            bufoffset = inputbuffer + littleint16_t(dbfheader.recordlength) * batchindex;
-            /* Skip deleted records */
-            if(bufoffset[0] == '*') {
-                continue;
+
+        /* Get PostgreSQL ready to receive lots of input */
+        printf("\\COPY %s FROM STDIN\n", baretablename);
+
+        dbfbatchsize = DBFBATCHTARGET / littleint16_t(dbfheader.recordlength);
+        if(!dbfbatchsize) {
+            dbfbatchsize = 1;
+        }
+        inputbuffer = malloc(littleint16_t(dbfheader.recordlength) * dbfbatchsize);
+        if(inputbuffer == NULL) {
+            exitwitherror("Unable to malloc a record buffer", 1);
+        }
+        outputbuffer = malloc(longestfield + 1);
+        if(outputbuffer == NULL) {
+            exitwitherror("Unable to malloc the output buffer", 1);
+        }
+
+        /* Loop across records in the file, taking 'dbfbatchsize' at a time, and
+         * output them in PostgreSQL-compatible format */
+        if(optshowprogress) {
+            fprintf(stderr, "Progress: 0");
+            fflush(stderr);
+        }
+        for(recordbase = 0; recordbase < littleint32_t(dbfheader.recordcount); recordbase += dbfbatchsize) {
+            blocksread = fread(inputbuffer, littleint16_t(dbfheader.recordlength), dbfbatchsize, dbffile);
+            if(blocksread != dbfbatchsize &&
+               recordbase + blocksread < littleint32_t(dbfheader.recordcount)) {
+                exitwitherror("Unable to read an entire record", 1);
             }
-            bufoffset++;
-
-            printedfieldcount = 0;
-            for(fieldnum = 0; fieldnum < fieldcount; fieldnum++) {
-                if(fields[fieldnum].type == '0') {
+            for(batchindex = 0; batchindex < blocksread; batchindex++) {
+                bufoffset = inputbuffer + littleint16_t(dbfheader.recordlength) * batchindex;
+                /* Skip deleted records */
+                if(bufoffset[0] == '*') {
                     continue;
                 }
+                bufoffset++;
 
-                if(fields[fieldnum].type == IGNORETYPE) {
-                    bufoffset += fields[fieldnum].length;
-                    continue;
-                }
-
-                if(printedfieldcount)
-                    printf("\t");
-
-                switch(fields[fieldnum].type) {
-                case 'B':
-                    /* Double floats */
-                    printf(pgfields[fieldnum].formatstring, sdouble(bufoffset));
-                    break;
-                case 'C':
-                case 'W':
-                    /* Varchars */
-                    safeprintbuf(bufoffset, fields[fieldnum].length, opttrimpadding);
-                    break;
-                case 'D':
-                    /* Datestamps */
-                    if(bufoffset[0] == ' ' || bufoffset[0] == '\0') {
-                        printf("\\N");
-                    } else {
-                        s = outputbuffer;
-                        *s++ = bufoffset[0];
-                        *s++ = bufoffset[1];
-                        *s++ = bufoffset[2];
-                        *s++ = bufoffset[3];
-                        *s++ = '-';
-                        *s++ = bufoffset[4];
-                        *s++ = bufoffset[5];
-                        *s++ = '-';
-                        *s++ = bufoffset[6];
-                        *s++ = bufoffset[7];
-                        *s++ = '\0';
-                        printf("%s", outputbuffer);
+                printedfieldcount = 0;
+                for(fieldnum = 0; fieldnum < fieldcount; fieldnum++) {
+                    if(fields[fieldnum].type == '0') {
+                        continue;
                     }
-                    break;
-                case 'G':
-                    /* General binary objects */
-                    /* This is left unimplemented to avoid breakage for
-                     * people porting databases with OLE objects, at least
-                     * until someone comes up with a good way to display
-                     * them. */
-                    break;
-                case 'I':
-                    /* Integers */
-                    printf("%d", slittleint32_t(bufoffset));
-                    break;
-                case 'L':
-                    /* Booleans */
-                    switch(bufoffset[0]) {
-                    case 'Y':
-                    case 'T':
-                        putchar('t');
-                        break;
-                    default:
-                        putchar('f');
-                        break;
+
+                    if(fields[fieldnum].type == IGNORETYPE) {
+                        bufoffset += fields[fieldnum].length;
+                        continue;
                     }
-                    break;
-                case 'M':
-                    /* Memos */
-                    if(pgfields[fieldnum].memonumbering == PACKEDMEMOSTYLE) {
-                        memoblocknumber = slittleint32_t(bufoffset);
-                    } else {
-                        memoblocknumber = 0;
-                        s = bufoffset;
-                        for(i = 0; i < 10; i++) {
-                            if(*s && *s != 32) {
-                                /* I'm unaware of any non-ASCII
-                                 * implementation of XBase. */
-                                memoblocknumber = memoblocknumber * 10 + *s - '0';
+
+                    if(printedfieldcount)
+                        printf("\t");
+
+                    switch(fields[fieldnum].type) {
+                    case 'B':
+                        /* Double floats */
+                        printf(pgfields[fieldnum].formatstring, sdouble(bufoffset));
+                        break;
+                    case 'C':
+                    case 'W':
+                        /* Varchars */
+                        safeprintbuf(bufoffset, fields[fieldnum].length, opttrimpadding);
+                        break;
+                    case 'D':
+                        /* Datestamps */
+                        if(bufoffset[0] == ' ' || bufoffset[0] == '\0') {
+                            printf("\\N");
+                        } else {
+                            s = outputbuffer;
+                            *s++ = bufoffset[0];
+                            *s++ = bufoffset[1];
+                            *s++ = bufoffset[2];
+                            *s++ = bufoffset[3];
+                            *s++ = '-';
+                            *s++ = bufoffset[4];
+                            *s++ = bufoffset[5];
+                            *s++ = '-';
+                            *s++ = bufoffset[6];
+                            *s++ = bufoffset[7];
+                            *s++ = '\0';
+                            printf("%s", outputbuffer);
+                        }
+                        break;
+                    case 'G':
+                        /* General binary objects */
+                        /* This is left unimplemented to avoid breakage for
+                         * people porting databases with OLE objects, at least
+                         * until someone comes up with a good way to display
+                         * them. */
+                        break;
+                    case 'I':
+                        /* Integers */
+                        printf("%d", slittleint32_t(bufoffset));
+                        break;
+                    case 'L':
+                        /* Booleans */
+                        switch(bufoffset[0]) {
+                        case 'Y':
+                        case 'T':
+                            putchar('t');
+                            break;
+                        default:
+                            putchar('f');
+                            break;
+                        }
+                        break;
+                    case 'M':
+                        /* Memos */
+                        if(pgfields[fieldnum].memonumbering == PACKEDMEMOSTYLE) {
+                            memoblocknumber = slittleint32_t(bufoffset);
+                        } else {
+                            memoblocknumber = 0;
+                            s = bufoffset;
+                            for(i = 0; i < 10; i++) {
+                                if(*s && *s != 32) {
+                                    /* I'm unaware of any non-ASCII
+                                     * implementation of XBase. */
+                                    memoblocknumber = memoblocknumber * 10 + *s - '0';
+                                }
+                                s++;
                             }
+                        }
+                        if(memoblocknumber) {
+                            memorecordoffset = memoblocksize * memoblocknumber;
+                            if(memorecordoffset >= memofilesize) {
+                                exitwitherror("A memo record past the end of the memofile was requested", 0);
+                            }
+                            memorecord = memomap + memorecordoffset;
+                            if(memofileisdbase3) {
+                                t = strchr(memorecord, 0x1A);
+                                safeprintbuf(memorecord, t - memorecord, opttrimpadding);
+                            } else {
+                                safeprintbuf(memorecord + 8, sbigint32_t(memorecord + 4), opttrimpadding);
+                            }
+                        }
+                        break;
+                    case 'F':
+                    case 'N':
+                        /* Numerics */
+                        strncpy(outputbuffer, bufoffset, fields[fieldnum].length);
+                        outputbuffer[fields[fieldnum].length] = '\0';
+                        /* Strip off *leading* spaces */
+                        s = outputbuffer;
+                        while(*s == ' ') {
                             s++;
                         }
-                    }
-                    if(memoblocknumber) {
-                        memorecordoffset = memoblocksize * memoblocknumber;
-                        if(memorecordoffset >= memofilesize) {
-                            exitwitherror("A memo record past the end of the memofile was requested", 0);
-                        }
-                        memorecord = memomap + memorecordoffset;
-                        if(memofileisdbase3) {
-                            t = strchr(memorecord, 0x1A);
-                            safeprintbuf(memorecord, t - memorecord, opttrimpadding);
+                        if(*s == '\0') {
+                            printf("\\N");
                         } else {
-                            safeprintbuf(memorecord + 8, sbigint32_t(memorecord + 4), opttrimpadding);
+                            printf("%s", s);
                         }
-                    }
-                    break;
-                case 'F':
-                case 'N':
-                    /* Numerics */
-                    strncpy(outputbuffer, bufoffset, fields[fieldnum].length);
-                    outputbuffer[fields[fieldnum].length] = '\0';
-                    /* Strip off *leading* spaces */
-                    s = outputbuffer;
-                    while(*s == ' ') {
-                        s++;
-                    }
-                    if(*s == '\0') {
-                        printf("\\N");
-                    } else {
-                        printf("%s", s);
-                    }
-                    break;
-                case 'T':
-                    /* Timestamps */
-                    juliandays = slittleint32_t(bufoffset);
-                    seconds = (slittleint32_t(bufoffset + 4) + 1) / 1000;
-                    if(!(juliandays || seconds)) {
-                        printf("\\N");
-                    } else {
-                        hours = seconds / 3600;
-                        seconds -= hours * 3600;
-                        minutes = seconds / 60;
-                        seconds -= minutes * 60;
-                        printf("J%d %02d:%02d:%02d", juliandays, hours, minutes, seconds);
-                    }
-                    break;
-                case 'Y':
-                    /* Currency */
-                    t = outputbuffer + sprintf(outputbuffer, "%05"PRId64, slittleint64_t(bufoffset));
-                    *(t + 1) = '\0';
-                    *(t) = *(t - 1);
-                    *(t - 1) = *(t - 2);
-                    *(t - 2) = *(t - 3);
-                    *(t - 3) = *(t - 4);
-                    *(t - 4) = '.';
-                    printf("%s", outputbuffer);
-                    break;
-                };
-                printedfieldcount++;
-                bufoffset += fields[fieldnum].length;
+                        break;
+                    case 'T':
+                        /* Timestamps */
+                        juliandays = slittleint32_t(bufoffset);
+                        seconds = (slittleint32_t(bufoffset + 4) + 1) / 1000;
+                        if(!(juliandays || seconds)) {
+                            printf("\\N");
+                        } else {
+                            hours = seconds / 3600;
+                            seconds -= hours * 3600;
+                            minutes = seconds / 60;
+                            seconds -= minutes * 60;
+                            printf("J%d %02d:%02d:%02d", juliandays, hours, minutes, seconds);
+                        }
+                        break;
+                    case 'Y':
+                        /* Currency */
+                        t = outputbuffer + sprintf(outputbuffer, "%05"PRId64, slittleint64_t(bufoffset));
+                        *(t + 1) = '\0';
+                        *(t) = *(t - 1);
+                        *(t - 1) = *(t - 2);
+                        *(t - 2) = *(t - 3);
+                        *(t - 3) = *(t - 4);
+                        *(t - 4) = '.';
+                        printf("%s", outputbuffer);
+                        break;
+                    };
+                    printedfieldcount++;
+                    bufoffset += fields[fieldnum].length;
+                }
+                printf("\n");
             }
-            printf("\n");
+            if(optshowprogress) {
+                updateprogressbar(100 * (recordbase + blocksread) / littleint32_t(dbfheader.recordcount));
+            }
         }
-        if(optshowprogress) {
-            updateprogressbar(100 * (recordbase + blocksread) / littleint32_t(dbfheader.recordcount));
-        }
+        if(optshowprogress) { updateprogressbar(100); }
+        free(inputbuffer);
+        free(outputbuffer);
+        printf("\\.\n");
     }
-    if(optshowprogress) { updateprogressbar(100); }
-    free(inputbuffer);
-    free(outputbuffer);
-    printf("\\.\n");
-
     /* Until this point, no changes have been flushed to the database */
     if(optusetransaction) {
         printf("COMMIT;\n");
     }
-
-    /* Generate the indexes */
-    for(i = optind + 1; i < argc; i++ ){
-        printf("CREATE INDEX %s_", tablename);
-        for(s = argv[i]; *s; s++) {
-            if(isalnum(*s)) {
-                putchar(*s);
-                lastcharwasreplaced = 0;
-            } else {
-                /* Only output one underscore in a row */
-                if(!lastcharwasreplaced) {
-                    putchar('_');
-                    lastcharwasreplaced = 1;
+    if(optloaddata) {
+        /* Generate the indexes */
+        for(i = optind + 1; i < argc; i++ ){
+            printf("CREATE INDEX %s_", tablename);
+            for(s = argv[i]; *s; s++) {
+                if(isalnum(*s)) {
+                    putchar(*s);
+                    lastcharwasreplaced = 0;
+                } else {
+                    /* Only output one underscore in a row */
+                    if(!lastcharwasreplaced) {
+                        putchar('_');
+                        lastcharwasreplaced = 1;
+                    }
                 }
             }
+            printf(" ON %s(%s);\n", baretablename, argv[i]);
         }
-        printf(" ON %s(%s);\n", baretablename, argv[i]);
     }
-
     free(tablename);
     free(baretablename);
     free(fields);

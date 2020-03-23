@@ -30,7 +30,7 @@
 #include <sys/types.h>
 
 #include "pgdbf.h"
-#define STANDARDOPTS "cCdDeEhm:i:nNpPqQrRtTuU"
+#define STANDARDOPTS "cCdDeEhm:i:nNpPqQrRtTuUx"
 
 int main(int argc, char **argv) {
     /* Describing the DBF file */
@@ -112,6 +112,7 @@ int main(int argc, char **argv) {
     int     optusetransaction = 1;
     int     optusetruncatetable = 0;
     int     opttrimpadding = 1;
+    int     optusetextdatatype = 0;
 
     /* Describing the PostgreSQL table */
     char *tablename;
@@ -220,6 +221,9 @@ int main(int argc, char **argv) {
         case 'U':
             optusetruncatetable = 0;
             break;
+        case 'x':
+            optusetextdatatype = 1;
+            break;
         case 'h':
         default:
             /* If we got here because someone requested '-h', exit
@@ -268,6 +272,7 @@ int main(int argc, char **argv) {
                "  -T  do not use an enclosing transaction\n"
                "  -u  issue a 'TRUNCATE' command before inserting data\n"
                "  -U  do not issue a 'TRUNCATE' command before inserting data (default)\n"
+               "  -x  use TEXT for character data types\n"
                "\n"
 #if defined(HAVE_ICONV)
                "If you don't specify an encoding via '-s', the data will be printed as is.\n"
@@ -576,7 +581,12 @@ int main(int argc, char **argv) {
         case 'C':
         case 'V':
         case 'W':
-            if(optusecreatetable) printf("VARCHAR(%d)", fields[fieldnum].length);
+            if(optusecreatetable) {
+                if(optusetextdatatype)
+                    printf("TEXT");
+                else
+                    printf("VARCHAR(%d)", fields[fieldnum].length);
+            }
             break;
         case 'D':
             if(optusecreatetable) printf("DATE");

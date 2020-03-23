@@ -30,7 +30,7 @@
 #include <sys/types.h>
 
 #include "pgdbf.h"
-#define STANDARDOPTS "cCdDeEhm:i:nNpPqQrRtTuU"
+#define STANDARDOPTS "cCdDeEhm:i:nNopPqQrRtTuU"
 
 int main(int argc, char **argv) {
     /* Describing the DBF file */
@@ -112,6 +112,7 @@ int main(int argc, char **argv) {
     int     optusetransaction = 1;
     int     optusetruncatetable = 0;
     int     opttrimpadding = 1;
+    int     optoptimizenums = 0;
 
     /* Describing the PostgreSQL table */
     char *tablename;
@@ -182,6 +183,9 @@ int main(int argc, char **argv) {
             break;
         case 'N':
             optnumericasnumeric = 0;
+            break;
+        case 'o':
+            optoptimizenums = 1;
             break;
         case 'p':
             optshowprogress = 1;
@@ -255,6 +259,7 @@ int main(int argc, char **argv) {
                "  -m  the name of the associated memo file (if necessary)\n"
                "  -n  use type 'NUMERIC' for NUMERIC fields (default)\n"
                "  -N  use type 'TEXT' for NUMERIC fields\n"
+               "  -o  optimize numeric data types (use SMALLINT,INTEGER and BIGINT instead of NUMBER(n) where applicable)\n"
                "  -r  remove padding at the end of TEXT and VARCHAR fields (default)\n"
                "  -R  keep padding at the end of TEXT and VARCHAR fields\n"
                "  -p  show a progress bar during processing\n"
@@ -621,7 +626,18 @@ int main(int argc, char **argv) {
                     if(fields[fieldnum].decimals > 0) {
                         printf("NUMERIC(%d, %d)", fields[fieldnum].length, fields[fieldnum].decimals);
                     } else {
-                        printf("NUMERIC(%d)", fields[fieldnum].length);
+                        if(optoptimizenums) {
+                            if(fields[fieldnum].length < 5)
+                                printf("SMALLINT");
+                            else if(fields[fieldnum].length < 10)
+                                printf("INTEGER");
+                            else if(fields[fieldnum].length < 19)
+                                printf("BIGINT");
+                            else
+                                printf("NUMERIC(%d)", fields[fieldnum].length);
+                        }
+                        else
+                            printf("NUMERIC(%d)", fields[fieldnum].length);
                     }
                 } else {
                     printf("TEXT");
